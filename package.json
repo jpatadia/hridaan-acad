@@ -1,0 +1,9 @@
+{
+  "name": "njsla-math-coach",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Adaptive daily NJSLA Grade 5 math practice that pushes into Grade 6.",
+  "scripts": {
+    "test": "node tests/run.js"
+  }
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NJSLA Math Coach</title>
+  <meta name="description" content="Adaptive daily NJSLA Grade 5 math practice that pushes into Grade 6.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧮</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🧮 <span>NJSLA Math Coach</span></div>
+    <nav>
+      <button data-nav="home" class="nav-btn">Today</button>
+      <button data-nav="progress" class="nav-btn">Progress</button>
+      <button data-nav="settings" class="nav-btn">Settings</button>
+    </nav>
+  </header>
+  <main id="app" aria-live="polite"></main>
+  <footer class="foot">No calculator — just like the NJSLA Grade 5 test. Progress is saved in this browser (use Settings → Export to back it up).</footer>
+
+  <script src="js/util.js"></script>
+  <script src="js/skills.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
