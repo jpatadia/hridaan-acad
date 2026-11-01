@@ -224,7 +224,7 @@
     q.newLevel = change.after;
     if (q.outcome !== 'correct') {
       state.missed.push({ date: today, skillId: q.skillId, level: q.level, prompt: q.prompt, answerText: q.answerText, given: q.tries.slice(), steps: q.steps, outcome: q.outcome });
-      if (state.missed.length > 300) state.missed = state.missed.slice(-300);
+      if (state.missed.length > MAX_MISSED) state.missed = state.missed.slice(-MAX_MISSED);
     }
     const day = getDay(state, today);
     if (dayScore(day).answered >= DAILY) { updateStreak(state, today); day.completed = true; }
@@ -247,5 +247,51 @@
     return { rows, g5Avg, unlockedG6: rows.filter((r) => r.grade === 6 && r.unlocked).length };
   }
 
-  NJ.engine = { DAILY, newState, skillState, isUnlocked, unlockedSkills, planDay, getDay, addBonus, questionAt, currentIndex, submit, recordResult, dayScore, levelLabel, summary };
+  // ---------- sync helpers ----------
+  const KEEP_FULL_DAYS = 14;
+  const MAX_MISSED = 150;
+
+  // Shrink old data so the saved state stays small (old days keep only scores).
+  function compactState(state, today) {
+    const t = U.dayNumber(today);
+    for (const [k, day] of Object.entries(state.days)) {
+      if (t - U.dayNumber(k) > KEEP_FULL_DAYS && !day.compact) {
+        day.questions = day.questions.map((q) => (q ? { skillId: q.skillId, level: q.level, role: q.role, outcome: q.outcome } : q));
+        day.compact = true;
+      }
+    }
+    if (state.missed.length > MAX_MISSED) state.missed = state.missed.slice(-MAX_MISSED);
+    return state;
+  }
+
+  // Combine two copies of the progress (this device + the cloud copy).
+  // Skill levels come from whichever copy changed most recently; days and
+  // missed questions are combined so no answered question is lost.
+  function mergeStates(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    // a reset or import replaces everything: the copy with the newest one wins outright
+    const ra = a.resetAt || 0, rb = b.resetAt || 0;
+    if (ra !== rb) return JSON.parse(JSON.stringify(ra > rb ? a : b));
+    const newer = (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a;
+    const older = newer === a ? b : a;
+    const out = JSON.parse(JSON.stringify(newer));
+    const answered = (d) => (d && d.questions ? d.questions.filter((q) => q && q.outcome).length : 0);
+    for (const [k, d] of Object.entries(older.days || {})) {
+      const mine = out.days[k];
+      if (!mine || answered(d) > answered(mine) || (answered(d) === answered(mine) && d.plan.length > mine.plan.length)) {
+        out.days[k] = JSON.parse(JSON.stringify(d));
+      }
+    }
+    const seen = new Set();
+    out.missed = [...(older.missed || []), ...(newer.missed || [])]
+      .filter((m) => { const id = `${m.date}|${m.prompt}`; if (seen.has(id)) return false; seen.add(id); return true; })
+      .sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0))
+      .slice(-MAX_MISSED);
+    if (older.streak && older.streak.last && (!out.streak.last || older.streak.last > out.streak.last)) out.streak = { ...older.streak };
+    out.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
+    return out;
+  }
+
+  NJ.engine = { compactState, mergeStates, DAILY, newState, skillState, isUnlocked, unlockedSkills, planDay, getDay, addBonus, questionAt, currentIndex, submit, recordResult, dayScore, levelLabel, summary };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

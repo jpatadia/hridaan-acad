@@ -1,8 +1,9 @@
 /* UI: daily session, feedback with hints + step-by-step guides, parent dashboard. */
 (function () {
   'use strict';
-  const { util: U, skills: SK, engine: E } = window.NJ;
+  const { util: U, skills: SK, engine: E, sync: S } = window.NJ;
   const KEY = 'njsla-coach-v1';
+  const SYNC_KEY = 'njsla-coach-sync';
   const app = document.getElementById('app');
 
   // ---------- storage ----------
@@ -20,6 +21,93 @@
   let view = 'home';
   let feedback = null; // feedback for the question on screen
   const today = () => U.dayKey();
+
+  // A real change (answer, bonus, settings): timestamp it, save, and sync.
+  function touch() {
+    state.updatedAt = Date.now();
+    save();
+    schedulePush();
+  }
+
+  // ---------- cloud sync (optional) ----------
+  function loadCfg() {
+    try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || null; } catch (e) { return null; }
+  }
+  function saveCfg() {
+    try { if (cfg) localStorage.setItem(SYNC_KEY, JSON.stringify(cfg)); else localStorage.removeItem(SYNC_KEY); } catch (e) { /* ignore */ }
+  }
+  let cfg = loadCfg(); // { token, gistId, role: 'student' | 'viewer', lastSync }
+  let syncStatus = { kind: cfg ? 'idle' : 'off', msg: '' };
+  let chain = Promise.resolve();
+  let pushTimer = null;
+  const isViewer = () => !!(cfg && cfg.role === 'viewer');
+
+  function setStatus(kind, msg = '') {
+    syncStatus = { kind, msg };
+    const el = document.getElementById('syncBadge');
+    if (!el) return;
+    const time = cfg && cfg.lastSync ? new Date(cfg.lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    const text = { off: '', idle: '☁️ Sync on', syncing: '⏳ Syncing…', ok: `☁️ Synced ${time}`, error: '⚠️ Not synced' }[kind];
+    el.textContent = text;
+    el.title = msg || (isViewer() ? 'Parent view: showing progress from the practice device' : 'Progress is backed up to your GitHub account');
+    el.hidden = kind === 'off';
+    el.className = `sync-badge ${kind}`;
+  }
+
+  function syncNow() {
+    if (!cfg) return Promise.resolve();
+    chain = chain.then(async () => {
+      if (!cfg) return;
+      setStatus('syncing');
+      try {
+        if (!cfg.gistId) {
+          cfg.gistId = await S.findGist(cfg.token);
+          if (!cfg.gistId) {
+            if (isViewer()) throw new Error('No saved progress found yet. Turn on sync on the practice device first.');
+            cfg.gistId = await S.createGist(cfg.token, E.compactState(state, today()));
+          }
+          saveCfg();
+        }
+        const remote = await S.read(cfg.token, cfg.gistId);
+        if (isViewer()) {
+          state = remote;
+        } else {
+          const merged = E.compactState(E.mergeStates(state, remote), today());
+          if (JSON.stringify(merged) !== JSON.stringify(remote)) await S.write(cfg.token, cfg.gistId, merged);
+          state = merged;
+        }
+        save();
+        cfg.lastSync = Date.now();
+        saveCfg();
+        setStatus('ok');
+        if (view !== 'quiz') render(); // never redraw mid-question (would wipe typing)
+      } catch (e) {
+        setStatus('error', e.message === 'offline' ? 'Offline — progress is saved here and will sync when back online.' : e.message);
+        if (view === 'settings') render();
+      }
+    });
+    return chain;
+  }
+
+  function schedulePush() {
+    if (!cfg || isViewer()) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(syncNow, 1500);
+  }
+
+  async function connect(token, role, gistId = null) {
+    cfg = { token: token.trim(), role, gistId, lastSync: null };
+    saveCfg();
+    await syncNow();
+    if (syncStatus.kind === 'error') {
+      const msg = syncStatus.msg;
+      cfg = null; saveCfg(); setStatus('off');
+      render();
+      alert('Could not turn on sync: ' + msg);
+      return false;
+    }
+    return true;
+  }
 
   // ---------- math text rendering ----------
   function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -58,6 +146,7 @@
   }
 
   function renderHome() {
+    if (isViewer()) { renderViewerHome(); return; }
     const t = today();
     const day = E.getDay(state, t);
     save();
@@ -103,7 +192,31 @@
       </div>`;
   }
 
+  function renderViewerHome() {
+    const t = today();
+    const day = state.days[t];
+    const sc = day ? E.dayScore(day) : { answered: 0, firstTry: 0, points: 0 };
+    const sum = E.summary(state);
+    const streak = state.streak.last && U.dayNumber(t) - U.dayNumber(state.streak.last) <= 1 ? state.streak.count : 0;
+    const last = Object.keys(state.days).filter((k) => E.dayScore(state.days[k]).answered > 0).sort().pop();
+    app.innerHTML = `
+      <div class="card">
+        <span class="tag">Parent view</span>
+        <h1 style="margin-top:8px">${esc(state.name)}’s day</h1>
+        <p class="muted">${sc.answered >= E.DAILY ? `Finished today’s 10 — ${sc.firstTry} right on the first try.` : sc.answered ? `In progress: ${sc.answered} of ${E.DAILY} answered, ${sc.firstTry} right on the first try.` : `Hasn’t started today’s questions yet.${last ? ` Last practiced ${esc(last)}.` : ''}`}</p>
+        ${day ? dotsHtml(day, -1) : ''}
+        <div class="row"><button class="btn secondary" data-act="sync">🔄 Refresh</button><button class="btn" data-nav="progress">See full progress →</button></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>🔥 ${streak}</b><span>day streak</span></div>
+        <div class="stat"><b>${sum.g5Avg.toFixed(1)} / 5</b><span>avg Grade 5 level (3 = NJSLA ready)</span></div>
+        <div class="stat"><b>${sum.unlockedG6} / 6</b><span>Grade 6 skills unlocked</span></div>
+        <div class="stat"><b>${Object.values(state.days).filter((d) => d.completed).length}</b><span>days completed</span></div>
+      </div>`;
+  }
+
   function renderQuiz() {
+    if (isViewer()) { view = 'home'; renderViewerHome(); return; }
     const t = today();
     const day = E.getDay(state, t);
     let i = E.currentIndex(state, t);
@@ -188,7 +301,7 @@
     const t = today();
     const q = E.questionAt(state, t, i);
     const r = E.submit(state, t, i, input);
-    save();
+    touch();
     feedback = { ...r, qid: q.id, index: q.outcome ? i : null };
     renderQuiz();
   }
@@ -270,15 +383,16 @@
         <label>Student name<br><input type="text" class="name-input" id="nameIn" value="${esc(state.name)}"></label>
         <button class="btn secondary" data-act="saveName" style="margin-left:8px">Save</button>
       </div>
+      ${syncCardHtml()}
       <div class="card">
-        <h2>Backup & move to another device</h2>
-        <p class="muted small">Progress lives in this browser only. Export a backup file now and then, and import it to continue on another device.</p>
+        <h2>Backup file</h2>
+        <p class="muted small">Save a copy of all progress as a file, or restore one. (With sync on, this is optional.)</p>
         <div class="row">
           <button class="btn secondary" data-act="export">⬇️ Export progress</button>
           <label class="btn secondary" style="display:inline-block">⬆️ Import progress<input type="file" id="importIn" accept="application/json,.json" hidden></label>
         </div>
       </div>
-      <div class="card">
+      <div class="card" ${isViewer() ? 'hidden' : ''}>
         <h2>Start over</h2>
         <p class="muted small">Erases all progress in this browser.</p>
         <button class="btn danger" data-act="reset">Reset all progress</button>
@@ -290,10 +404,55 @@
         try {
           const s = JSON.parse(txt);
           if (!s || !s.skills || !s.days) throw new Error('not a progress file');
-          state = s; save(); alert('Progress imported!'); view = 'home'; render();
+          state = s; state.resetAt = Date.now(); touch(); alert('Progress imported!'); view = 'home'; render();
         } catch (err) { alert('That file could not be imported: ' + err.message); }
       });
     });
+  }
+
+  function syncCardHtml() {
+    if (!cfg) {
+      return `<div class="card" id="syncCard">
+        <h2>☁️ Sync between devices</h2>
+        <p class="small">Practice on one device (like ${esc(state.name)}’s laptop) and check progress from another (like your phone). Progress is stored in a private file in <b>your GitHub account</b>. It’s free and needs no new accounts.</p>
+        <ol class="small setup-steps">
+          <li><a href="https://github.com/settings/tokens/new?scopes=gist&description=NJSLA%20Math%20Coach" target="_blank" rel="noopener">Open this GitHub page</a> (sign in if asked). The “gist” box is already ticked; leave every other box empty. Pick an expiration (1 year is fine), click <b>Generate token</b>, and copy the key it shows (starts with <code>ghp_</code>).</li>
+          <li>Paste the key here, choose what this device is for, and tap <b>Turn on sync</b>.</li>
+          <li>Then use <b>Copy setup link</b> to connect your other devices without typing the key again.</li>
+        </ol>
+        <input type="password" class="name-input wide" id="tokenIn" placeholder="Paste your GitHub key (ghp_…)" autocomplete="off">
+        <div class="role-pick">
+          <label><input type="radio" name="role" value="student" checked> <b>Practice device</b>: ${esc(state.name)} practices here</label>
+          <label><input type="radio" name="role" value="viewer"> <b>Parent view</b>: only check progress here (read-only)</label>
+        </div>
+        <button class="btn" data-act="connect">Turn on sync</button>
+      </div>`;
+    }
+    const when = cfg.lastSync ? new Date(cfg.lastSync).toLocaleString() : 'not yet';
+    return `<div class="card" id="syncCard">
+      <h2>☁️ Sync between devices</h2>
+      <p class="small">This device: <b>${isViewer() ? 'Parent view (read-only)' : 'Practice device'}</b> · Last synced: ${esc(when)}</p>
+      ${syncStatus.kind === 'error' ? `<div class="feedback warn small">${esc(syncStatus.msg)}</div>` : ''}
+      <div class="row" style="margin-top:12px">
+        <button class="btn secondary" data-act="sync">🔄 Sync now</button>
+        <button class="btn danger" data-act="disconnect">Turn off sync on this device</button>
+      </div>
+      <h3>Connect another device</h3>
+      <p class="small muted">Copy a link and open it on the other device. It includes your sync key, so only send it to yourself (for example, text or email it to yourself).</p>
+      <div class="row">
+        <button class="btn secondary" data-act="link-viewer">📋 Copy setup link: parent view</button>
+        <button class="btn secondary" data-act="link-student">📋 Copy setup link: practice device</button>
+      </div>
+      <input type="text" class="name-input wide" id="linkOut" readonly hidden style="margin-top:10px">
+    </div>`;
+  }
+
+  function copyLink(role) {
+    const link = S.makeSetupLink(cfg, role);
+    const out = document.getElementById('linkOut');
+    out.hidden = false; out.value = link; out.select();
+    const done = () => alert(`Link copied. Open it on the ${role === 'viewer' ? 'parent' : 'practice'} device's browser.`);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, () => {});
   }
 
   // ---------- events ----------
@@ -305,9 +464,20 @@
     const a = act.dataset.act;
     if (a === 'start') { view = 'quiz'; feedback = null; render(); }
     else if (a === 'next') { feedback = null; renderQuiz(); window.scrollTo(0, 0); }
-    else if (a === 'bonus') { E.addBonus(state, today(), 5); save(); view = 'quiz'; feedback = null; render(); }
+    else if (a === 'bonus') { E.addBonus(state, today(), 5); touch(); view = 'quiz'; feedback = null; render(); }
     else if (a === 'home') { view = 'home'; render(); }
-    else if (a === 'saveName') { state.name = document.getElementById('nameIn').value.trim() || 'Student'; save(); alert('Saved!'); }
+    else if (a === 'saveName') { state.name = document.getElementById('nameIn').value.trim() || 'Student'; touch(); alert('Saved!'); }
+    else if (a === 'sync') { syncNow(); }
+    else if (a === 'connect') {
+      const token = document.getElementById('tokenIn').value;
+      const role = (document.querySelector('input[name=role]:checked') || {}).value || 'student';
+      if (!token.trim()) { alert('Paste your GitHub key first.'); return; }
+      if (role === 'viewer' && Object.values(state.skills).some((x) => x.attempts > 0) && !confirm('This device has its own practice progress. Parent view will show the synced progress instead. Continue?')) return;
+      connect(token, role).then((ok) => { if (ok) { alert(role === 'viewer' ? 'Sync is on. This device now shows progress from the practice device.' : 'Sync is on. Progress will be saved after every answer.'); view = role === 'viewer' ? 'home' : 'settings'; render(); } });
+    } else if (a === 'disconnect') {
+      if (confirm('Turn off sync on this device? Progress stays saved in your GitHub account and on your other devices.')) { cfg = null; saveCfg(); setStatus('off'); render(); }
+    } else if (a === 'link-viewer') copyLink('viewer');
+    else if (a === 'link-student') copyLink('student');
     else if (a === 'export') {
       const blob = new Blob([JSON.stringify(state, null, 1)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -316,9 +486,32 @@
       document.body.appendChild(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } else if (a === 'reset') {
-      if (confirm('Erase ALL progress? This cannot be undone.')) { const n = state.name; state = E.newState(n); save(); view = 'home'; render(); }
+      if (confirm(`Erase ALL progress${cfg ? ' on every synced device' : ''}? This cannot be undone.`)) { const n = state.name; state = E.newState(n); state.resetAt = Date.now(); touch(); view = 'home'; render(); }
     }
   });
 
-  render();
+  // keep in sync when the app is reopened or the connection comes back
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); else if (pushTimer) { clearTimeout(pushTimer); syncNow(); } });
+  window.addEventListener('online', () => syncNow());
+  setInterval(() => { if (isViewer() && document.visibilityState === 'visible') syncNow(); }, 120000);
+  document.getElementById('syncBadge').addEventListener('click', () => { view = 'settings'; render(); });
+
+  // opened from a setup link? (on load, or pasted into an already-open tab)
+  function handleSetupLink() {
+    const fromLink = S.readSetupLink(location.hash);
+    if (!fromLink) return false;
+    history.replaceState(null, '', location.pathname + location.search); // remove the key from the address bar
+    view = 'home';
+    render();
+    if (confirm(fromLink.role === 'viewer' ? 'Set up this device as PARENT VIEW (read-only progress)?' : 'Set up this device as a PRACTICE device?')) {
+      connect(fromLink.token, fromLink.role, fromLink.gistId).then((ok) => { if (ok) { view = 'home'; render(); } });
+    }
+    return true;
+  }
+  window.addEventListener('hashchange', handleSetupLink);
+  if (!handleSetupLink()) {
+    render();
+    setStatus(syncStatus.kind);
+    syncNow();
+  }
 })();

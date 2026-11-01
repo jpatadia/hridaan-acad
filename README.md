@@ -17,7 +17,23 @@ An adaptive daily math coach for Hridaan, built to help him **excel on the NJSLA
 2. In the repo, go to **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 3. The included workflow runs the tests and publishes the site at `https://<your-username>.github.io/hridaan-acad/`. Bookmark it or add it to the home screen.
 
-Progress is saved in the browser on that device. Use **Settings → Export progress** for a backup, and **Import** to move to another device.
+Progress is saved in the browser on that device. To see it on other devices, turn on sync (below).
+
+## Sync between devices (check progress from your phone)
+
+Sync stores progress in a **private (secret) GitHub Gist in your own GitHub account**: free, and no new service to sign up for.
+
+1. On Hridaan's laptop, open the coach → **Settings → Sync between devices**.
+2. Click **Open this GitHub page**. It opens GitHub's "new token" page with only the **gist** permission ticked. Leave everything else unticked, pick an expiration (e.g. 1 year), click **Generate token**, and copy the key (`ghp_…`).
+3. Paste it in, choose **Practice device**, and tap **Turn on sync**. Any progress already on the laptop is kept and uploaded.
+4. Tap **Copy setup link: parent view**, send it to yourself (text or email), and open it on your phone. Your phone becomes a read-only **Parent view** of his day, streak, levels and missed questions. Tap **Refresh** any time.
+
+How it behaves:
+- The practice device saves after every answer. If it's offline, practice still works and catches up when the connection returns (the header shows ⚠️ Not synced until then).
+- Parent view never changes anything; it only reads. It refreshes when opened and every 2 minutes while open.
+- More than one practice device is fine (e.g. laptop and tablet). Answered questions from both are kept.
+- The key can only read and write gists: no access to your code, repos or account settings. It is stored in the browser on each connected device, and the setup link contains it, so only send the link to yourself. To revoke access, delete the token at https://github.com/settings/tokens; when it expires, create a new one and reconnect.
+- Old days are compacted (scores kept, question text dropped after 14 days), so a full year of history stays small.
 
 ## What the 10 daily questions are
 
@@ -78,12 +94,13 @@ index.html        page shell
 styles.css        styles (light + dark mode, phone-friendly)
 js/util.js        seeded random numbers, fractions, answer parsing/checking
 js/skills.js      the 19 skills: question generators, hints, step-by-step solutions
-js/engine.js      adaptive engine: levels, unlocks, daily plan, scoring
+js/engine.js      adaptive engine: levels, unlocks, daily plan, scoring, merging synced copies
+js/sync.js        optional sync through a private GitHub Gist
 js/app.js         user interface
 tests/run.js      tests (node tests/run.js)
 ```
 
-The tests generate 400 questions for every skill at every level and check that each one is well formed, that its answer is accepted when typed, and that the answer appears in the steps. They also simulate strong, struggling and fraction-weak students over several weeks to confirm the engine adapts.
+The tests generate 400 questions for every skill at every level and check that each one is well formed, that its answer is accepted when typed, and that the answer appears in the steps. They also simulate strong, struggling and fraction-weak students over several weeks to confirm the engine adapts, and check that merging synced copies never loses an answered question.
 
 ### Adding a new skill
 Add an entry to `js/skills.js` with an `id`, `name`, `standard`, `domain`, `grade`, `weight` (how often it appears) and a `gen(level, rng)` function that returns `{ prompt, answer, hint, steps }`. For Grade 6 skills, also add `prereqs`. Run `npm test`.

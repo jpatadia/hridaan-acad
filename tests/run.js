@@ -156,4 +156,56 @@ test('state survives JSON round-trip', () => {
   assert.deepStrictEqual(copy, st);
 });
 
+// ---------- sync merge ----------
+function playDay(st, key, n, right = true) {
+  for (let i = 0; i < n; i++) {
+    const q = E.questionAt(st, key, E.currentIndex(st, key));
+    const bad = q.answer.type === 'choice' ? (q.answer.correct + 1) % q.answer.choices.length : '-99999';
+    let r = E.submit(st, key, E.currentIndex(st, key), right ? (q.answer.type === 'choice' ? q.answer.correct : q.answerText) : bad);
+    if (r.tryAgain) E.submit(st, key, E.currentIndex(st, key), bad);
+  }
+  st.updatedAt = (st.updatedAt || 0) + 1000;
+}
+
+test('merge keeps answered days from both devices', () => {
+  const base = E.newState(); base.updatedAt = 1;
+  const a = JSON.parse(JSON.stringify(base)), b = JSON.parse(JSON.stringify(base));
+  playDay(a, '2026-11-02', 10);           // laptop on day 2
+  playDay(b, '2026-11-03', 4, false);     // another device on day 3
+  b.updatedAt = a.updatedAt + 5;
+  const m = E.mergeStates(a, b);
+  assert.strictEqual(E.dayScore(m.days['2026-11-02']).answered, 10);
+  assert.strictEqual(E.dayScore(m.days['2026-11-03']).answered, 4);
+  assert(m.missed.length >= 4);
+  assert.deepStrictEqual(E.mergeStates(m, m), m, 'merging with itself changes nothing');
+});
+
+test('merge never loses answers when the other copy has fewer', () => {
+  const a = E.newState(); playDay(a, '2026-11-02', 7);
+  const viewerCopy = JSON.parse(JSON.stringify(a));
+  playDay(a, '2026-11-02', 3);            // laptop keeps going
+  const m = E.mergeStates(viewerCopy, a);
+  assert.strictEqual(E.dayScore(m.days['2026-11-02']).answered, 10);
+  assert.deepStrictEqual(m.skills, a.skills);
+});
+
+test('reset or import wins over older progress', () => {
+  const a = E.newState(); playDay(a, '2026-11-02', 10);
+  const fresh = E.newState(); fresh.resetAt = Date.now(); fresh.updatedAt = 1;
+  const m = E.mergeStates(a, fresh);
+  assert.deepStrictEqual(m.days, {});
+});
+
+test('compactState keeps scores but shrinks old days', () => {
+  const st = simulate(() => 0.8, 30);
+  const before = JSON.stringify(st).length;
+  E.compactState(st, '2026-12-15');
+  assert(JSON.stringify(st).length < before * 0.7, 'smaller');
+  const old = st.days['2026-11-01'];
+  assert(old.compact && E.dayScore(old).answered === 10);
+  const year = E.compactState(simulate(() => 0.8, 365), '2027-11-01');
+  const size = JSON.stringify(year).length;
+  assert(size < 900000, `a year of history must stay under the gist inline limit (${size} bytes)`);
+});
+
 console.log(`${passed} test groups passed${process.exitCode ? ' (with failures above)' : ''}.`);

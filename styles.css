@@ -134,9 +134,18 @@ th { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spa
 .table-wrap { overflow-x: auto; }
 .missed-item { border-top: 1px solid var(--line); padding: 10px 0; }
 .legend li { margin: 4px 0; }
-input[type="text"].name-input { padding: 10px 12px; border: 2px solid var(--line); border-radius: 10px; background: var(--bg); }
+.name-input { padding: 10px 12px; border: 2px solid var(--line); border-radius: 10px; background: var(--bg); }
 .history { display: flex; gap: 6px; align-items: flex-end; height: 90px; margin-top: 8px; }
 .history .col { flex: 1; background: var(--accent); border-radius: 6px 6px 0 0; min-width: 8px; position: relative; }
 .history .col span { position: absolute; top: -18px; left: 0; right: 0; text-align: center; font-size: 11px; color: var(--muted); }
 .history-labels { display: flex; gap: 6px; font-size: 10px; color: var(--muted); }
 .history-labels span { flex: 1; text-align: center; min-width: 8px; }
+
+.sync-badge { margin-left: 8px; font-size: 12px; font-weight: 600; border: 0; border-radius: 99px; padding: 3px 9px; background: var(--good-soft); color: var(--good); cursor: pointer; vertical-align: middle; }
+.sync-badge.error { background: var(--warn-soft); color: var(--warn); }
+.sync-badge.syncing, .sync-badge.idle { background: var(--accent-soft); color: var(--accent); }
+.name-input.wide { width: 100%; margin: 8px 0; }
+.role-pick { display: grid; gap: 8px; margin: 8px 0 14px; font-size: 15px; }
+.setup-steps li { margin: 6px 0; }
+.setup-steps a { color: var(--accent); }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; font-size: .9em; }
